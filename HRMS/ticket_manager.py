@@ -1,5 +1,5 @@
 from typing import List, Dict, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from HRMS.schemas import TicketCreate, TicketStatusUpdate
 
 
@@ -10,15 +10,15 @@ class TicketManager:
 
     def create_ticket(self, req: TicketCreate) -> str:
         ticket_id = f"T{self._next_id:04d}"
+        now = datetime.now(timezone.utc).isoformat()
         ticket = {
             "ticket_id": ticket_id,
             "emp_id": req.emp_id,
             "item": req.item,
             "reason": req.reason,
             "status": "Open",
-            # TODO: datetime.utcnow() is deprecated since Python 3.12 - use datetime.now(timezone.utc).
-            "created_at": datetime.utcnow().isoformat(),
-            "updated_at": datetime.utcnow().isoformat()
+            "created_at": now,
+            "updated_at": now
         }
         self.tickets.append(ticket)
         self._next_id += 1
@@ -28,7 +28,7 @@ class TicketManager:
         for t in self.tickets:
             if t["ticket_id"] == ticket_id:
                 t["status"] = req.status
-                t["updated_at"] = datetime.utcnow().isoformat()
+                t["updated_at"] = datetime.now(timezone.utc).isoformat()
                 return f"Ticket {ticket_id} status updated to {req.status}."
         raise ValueError(f"Ticket '{ticket_id}' not found.")
 

@@ -8,6 +8,15 @@ authors = [{ name = "Goutham Kachhawa", email = "goutham.kachhawa82@gmail.com" }
 license = { text = "MIT" }
 dependencies = [
     "mcp[cli]>=1.9.4",
-    "pydantic>=2.0",
+    "pydantic[email]>=2.0",
     "python-dotenv>=1.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

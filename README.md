@@ -21,12 +21,13 @@ Below are real-world examples of the HR Assistant Agent in action, demonstrating
 
 ### Key Features
 
-- **🧑‍💼 Employee Management**: Add employees, retrieve details, search by name, and manage organizational hierarchy
-- **📅 Leave Management**: Track leave balances, process applications, and maintain leave history
-- **🗓️ Meeting Scheduler**: Schedule, view, and cancel meetings with conflict detection
+- **🧑‍💼 Employee Management**: Add employees, search by full/first/last name (typo-tolerant), and view reporting lines
+- **📅 Leave Management**: Track leave balances, process applications (rejecting past, duplicate, or over-balance requests), and maintain leave history
+- **🗓️ Meeting Scheduler**: Schedule, view, and cancel meetings with conflict detection and past-date checks
 - **🎫 IT Ticketing**: Create and track equipment requests (laptops, monitors, accessories)
 - **📧 Email Automation**: Automated email notifications for onboarding, approvals, and updates
 - **🚀 Smart Onboarding**: Complete employee onboarding workflow with a single prompt
+- **✅ Validated & Tested**: Pydantic validation (including email format) on every input, plus a pytest suite covering each module
 
 ## 🎯 Why It Matters
 
@@ -113,6 +114,26 @@ Below are real-world examples of the HR Assistant Agent in action, demonstrating
 - Mock employee database with 8 employees
 - Sample leave records, meetings, and tickets
 
+### Available MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `add_employee` | Add a new employee (with optional manager) and set up their leave balance; returns the new employee ID |
+| `get_employee_details` | Search employees by full, first, or last name (typo-tolerant); returns all matches |
+| `get_direct_reports` | List the employees reporting to a manager |
+| `send_email` | Send plain-text or HTML email via SMTP |
+| `create_ticket` | Raise an equipment/IT ticket for an employee |
+| `update_ticket_status` | Move a ticket to `Open`, `In Progress`, `Closed`, or `Rejected` |
+| `list_tickets` | List tickets, optionally filtered by employee and/or status |
+| `schedule_meeting` | Schedule a meeting (rejects past times and double-booking) |
+| `get_meetings` | List an employee's meetings in date order |
+| `cancel_meeting` | Cancel a meeting by time (and optionally topic) |
+| `get_employee_leave_balance` | Get an employee's remaining leave days |
+| `apply_leave` | Apply for one or more leave days |
+| `get_leave_history` | Get an employee's past leave dates |
+
+The server also provides an **`onboard_new_employee`** prompt that walks Claude through the full onboarding workflow.
+
 ## 📁 Project Structure
 
 ```
@@ -126,6 +147,9 @@ hr-assistant-mcp-agent/
 │   ├── ticket_manager.py         # IT ticketing system
 │   └── schemas.py                # Pydantic data models
 │
+├── tests/
+│   └── test_hrms.py              # pytest suite for all managers
+│
 ├── server.py                      # FastMCP server & tool definitions
 ├── emails.py                      # Email automation module
 ├── utils.py                       # Data seeding utilities
@@ -133,7 +157,7 @@ hr-assistant-mcp-agent/
 ├── .env                          # Environment variables (not in repo)
 ├── .gitignore                    # Git ignore rules
 ├── pyproject.toml                # Project dependencies
-├── python-version.txt            # Python version specification
+├── .python-version               # Python version used by uv
 ├── LICENSE                       # MIT license
 ├── README.md                     # This file
 └── uv.lock                       # Dependency lock file
@@ -147,7 +171,8 @@ hr-assistant-mcp-agent/
 |-----------|---------|---------|
 | **Python** | Primary language | 3.10+ |
 | **MCP Python SDK (FastMCP)** | MCP server framework | 1.9.4+ |
-| **Pydantic** | Data validation | 2.0+ |
+| **Pydantic** | Data validation (incl. email) | 2.0+ |
+| **pytest** | Testing | 8.0+ |
 | **Claude AI** | Conversational interface | Sonnet 4.5 |
 
 ### Key Libraries
@@ -190,7 +215,7 @@ uv sync
 
 **Using pip:**
 ```bash
-pip install "mcp[cli]" pydantic python-dotenv
+pip install "mcp[cli]" "pydantic[email]" python-dotenv
 ```
 
 ### Step 3: Configure Environment Variables
@@ -249,12 +274,18 @@ uv run mcp dev server.py
 2. Look for the 🔌 icon indicating MCP connection
 3. Start interacting with your HR Assistant!
 
+### Step 6: Run the Tests
+
+```bash
+uv run pytest
+```
+
 ## 💡 Usage Examples
 
 ### Example 1: Onboarding a New Employee
 
 ```
-You: Onboard a new employee named Alex Thompson with email alex.thompson@bluparrot.in 
+You: Onboard a new employee named Alex Thompson with email alex.thompson@example.com 
      reporting to Sarah Johnson
 
 Claude: I'll help you onboard Alex Thompson. Let me:
@@ -274,7 +305,7 @@ Claude: I'll help you onboard Alex Thompson. Let me:
 ### Example 2: Checking Leave Balance
 
 ```
-You: What's Tony Sharma's leave balance?
+You: What's Tony's leave balance?
 
 Claude: Tony Sharma (E004) has 12 leave days remaining.
 ```
@@ -314,7 +345,7 @@ Michael Chen (E002) - CPO
 ```
 
 ### Sample Data Includes
-- **8 Employees** across leadership, engineering, and product teams
+- **8 Employees** across leadership, engineering, and product teams (all emails use the reserved `example.com` domain, so test emails never reach a real inbox)
 - **Random leave balances** (5-20 days per employee)
 - **Historical leave records** (1-90 days ago)
 - **Scheduled meetings** (next 10 days)
@@ -342,9 +373,7 @@ emailer = EmailSender(
 Adjust in `leave_manager.py`:
 
 ```python
-self.employee_leaves: Dict[str, Dict] = defaultdict(
-    lambda: {"balance": 20, "history": []}  # Change default balance
-)
+DEFAULT_LEAVE_BALANCE = 20  # Leave days given to each new employee
 ```
 
 ### Ticket ID Format
@@ -362,7 +391,7 @@ ticket_id = f"T{self._next_id:04d}"  # Format: T0001, T0002, etc.
 1. **Environment Variables**: Sensitive credentials stored in `.env` file
 2. **TLS/SSL**: Encrypted email communications
 3. **No Hardcoded Secrets**: All passwords and tokens externalized
-4. **Input Validation**: Pydantic schemas validate all inputs
+4. **Input Validation**: Pydantic schemas validate all inputs, including email format
 5. **Error Handling**: Graceful error messages without exposing internals
 
 ### Additional Recommendations
@@ -379,6 +408,10 @@ ticket_id = f"T{self._next_id:04d}"  # Format: T0001, T0002, etc.
 ### Common Issues
 
 #### 1. Email Not Sending
+
+**Problem**: `Email is not configured: set SENDER_EMAIL and SENDER_EMAIL_PWD`
+
+**Solution**: Create the `.env` file from Step 3 (or add the `env` block to your Claude Desktop config) and restart the server.
 
 **Problem**: `SMTPAuthenticationError: Username and Password not accepted`
 
@@ -402,7 +435,7 @@ ticket_id = f"T{self._next_id:04d}"  # Format: T0001, T0002, etc.
 **Problem**: `ValueError: Employee ID 'E999' not found`
 
 **Solution**:
-- Use `search_employee_by_name()` for fuzzy matching
+- Search by name with `get_employee_details` (first name, last name, or full name all work)
 - Check employee exists in seeded data
 - Verify employee ID format (E001, E002, etc.)
 

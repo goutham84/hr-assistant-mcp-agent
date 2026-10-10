@@ -8,11 +8,9 @@ class MeetingManager:
         self.meetings: Dict[str, List[Dict[str, str]]] = defaultdict(list)
 
     def schedule_meeting(self, req: MeetingCreate) -> str:
+        if req.meeting_dt < datetime.now(req.meeting_dt.tzinfo):
+            raise ValueError("Cannot schedule a meeting in the past.")
         dt_str = req.meeting_dt.isoformat()
-        try:
-            datetime.fromisoformat(dt_str)
-        except ValueError:
-            raise ValueError("Invalid datetime format; use ISO format.")
         emp_id = req.emp_id
         if any(m["date"] == dt_str for m in self.meetings[emp_id]):
             raise ValueError(f"Conflict: {emp_id} already has a meeting at {dt_str}.")

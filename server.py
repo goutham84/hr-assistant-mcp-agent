@@ -1,14 +1,16 @@
-from emails import EmailSender
-from HRMS import *
+import os
+from datetime import date, datetime
 from typing import List, Dict, Optional
+
+from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
-# load the env
-from dotenv import load_dotenv
-load_dotenv()
+from emails import EmailSender
+from HRMS import *
+from utils import seed_services  # SEEDING THE DATA OR CREATING THE VIRTUAL DATA ABOUT EMPLOYEES, LEAVES, TICKET INFO , ETC
 
-import os
-from utils import seed_services # SEEDING THE DATA OR CREATING THE VIRTUAL DATA ABOUT EMPLOYEES, LEAVES, TICKET INFO , ETC
+# load the env
+load_dotenv()
 
 employee_manager = EmployeeManager()
 meeting_manager = MeetingManager()
@@ -27,54 +29,68 @@ emailer = EmailSender(
 
 mcp = FastMCP("hr-assist")  # CREATING THE MCP
 
-# TODO: manager_id is documented as optional but typed as required - use Optional[str] = None.
-# TODO: return the new emp_id (e.g. "Added E009") so Claude doesn't need an extra lookup before creating tickets.
-# TODO: also initialise a leave balance for the new hire - right now apply_leave says "Employee ID not found" for them.
+
+def _require_employee(emp_id: str) -> None:
+    """Raise ValueError if the employee ID doesn't exist, so tools fail with a clear message."""
+    employee_manager.get_employee_details(emp_id)
+
+
 @mcp.tool()
-def add_employee(emp_name:str, manager_id:str, email:str) -> str:
+def add_employee(emp_name: str, email: str, manager_id: Optional[str] = None) -> str:
     """
-    Add a new employee to the HRMS system.
-    :param emp_name: Employee name
-    :param manager_id: Manager ID (optional)
-    :return: Confirmation message
+    Add a new employee to the HRMS system and set up their leave balance.
+    :param emp_name: Full name of the employee
+    :param email: Email address of the employee
+    :param manager_id: Manager's employee ID, e.g. 'E004' (optional)
+    :return: Confirmation message including the new employee ID
     """
-    emp = EmployeeCreate(
-        emp_id=employee_manager.get_next_emp_id(),
+    emp_id = employee_manager.get_next_emp_id()
+    employee_manager.add_employee(EmployeeCreate(
+        emp_id=emp_id,
         name=emp_name,
         manager_id=manager_id,
         email=email
-    )
-    employee_manager.add_employee(emp)
-    return f"Employee {emp_name} added successfully."
+    ))
+    leave_manager.register_employee(emp_id)
+    return f"Employee {emp_name} added successfully with ID {emp_id}."
 
 @mcp.tool()
-def get_employee_details(name: str) -> Dict[str, str]:
+def get_employee_details(name: str) -> List[Dict[str, Optional[str]]]:
     """
-    Get employee details by name.
-    :param name: Name of the employee
-    :return: Employee ID and manager ID
+    Search employees by name. Matches full, first or last name and tolerates small typos.
+    :param name: Name of the employee (e.g. 'Tony' or 'Tony Sharma')
+    :return: List of matching employee records (ID, name, manager ID, email)
     """
-    # TODO: fuzzy match runs on full names, so searching just "Tony" returns nothing; also match on first/last name.
-    # TODO: if several employees match, return all of them instead of silently picking matches[0].
     matches = employee_manager.search_employee_by_name(name)
-
-    if len(matches) == 0:
+    if not matches:
         raise ValueError(f"No employees found with name {name}.")
+    return [employee_manager.get_employee_details(emp_id) for emp_id in matches]
 
-    emp_id = matches[0]
-    emp_details = employee_manager.get_employee_details(emp_id)
-    return emp_details
-
-# TODO: add a docstring - MCP sends it to Claude as the tool description, and this tool currently has none.
-# TODO: return type says None but it returns a string; also catch SMTP errors / missing credentials and return a clear message.
 @mcp.tool()
-def send_email(to_emails: List[str], subject: str, body: str, html: bool = False) -> None:
+def get_direct_reports(manager_id: str) -> List[Dict[str, Optional[str]]]:
+    """
+    List the employees who report directly to a manager.
+    :param manager_id: Manager's employee ID
+    :return: List of employee records
+    """
+    return [employee_manager.get_employee_details(eid) for eid in employee_manager.get_direct_reports(manager_id)]
+
+@mcp.tool()
+def send_email(to_emails: List[str], subject: str, body: str, html: bool = False) -> str:
+    """
+    Send an email (e.g. welcome mail to a new hire or a notification to their manager).
+    :param to_emails: List of recipient email addresses
+    :param subject: Email subject line
+    :param body: Email body, plain text or HTML
+    :param html: Set to true if the body is HTML
+    :return: Confirmation message
+    """
     emailer.send_email(subject, body, to_emails, from_email=emailer.username, html=html)
-    return "Email sent successfully."
+    return f"Email sent successfully to {', '.join(to_emails)}."
 
 
 @mcp.tool()
-def create_ticket(emp_id: str, item: str, reason:str) -> str:
+def create_ticket(emp_id: str, item: str, reason: str) -> str:
     """
     Create a ticket for buying required items for an employee.
     :param emp_id: Employee ID
@@ -82,26 +98,26 @@ def create_ticket(emp_id: str, item: str, reason:str) -> str:
     :param reason: Reason for the request
     :return: Confirmation message
     """
+    _require_employee(emp_id)
     ticket_req = TicketCreate(emp_id=emp_id, item=item, reason=reason)
     return ticket_manager.create_ticket(ticket_req)
 
 @mcp.tool()
-def update_ticket_status(ticket_id: str, status: str) -> str:
+def update_ticket_status(ticket_id: str, status: TicketStatus) -> str:
     """
     Update the status of a ticket.
-    :param ticket_id: Ticket ID
+    :param ticket_id: Ticket ID, e.g. 'T0001'
     :param status: New status of the ticket
     :return: Confirmation message
     """
     ticket_status_update = TicketStatusUpdate(status=status)
     return ticket_manager.update_ticket_status(ticket_status_update, ticket_id)
 
-# TODO: both filters are described as optional - make them Optional[str] = None; return type should be List[Dict].
 @mcp.tool()
-def list_tickets(employee_id: str, status: str) -> str:
+def list_tickets(employee_id: Optional[str] = None, status: Optional[TicketStatus] = None) -> List[Dict[str, str]]:
     """
-    List tickets for an employee with optional status filter.
-    :param employee_id: Employee ID
+    List tickets, optionally filtered by employee and/or status.
+    :param employee_id: Employee ID (optional)
     :param status: Ticket status (optional)
     :return: List of tickets
     """
@@ -113,10 +129,11 @@ def schedule_meeting(employee_id: str, meeting_datetime: datetime, topic: str) -
     """
     Schedule a meeting for an employee.
     :param employee_id: Employee ID
-    :param meeting_datetime: Date and time of the meeting in python datetime format
+    :param meeting_datetime: Date and time of the meeting in ISO format, e.g. 2026-01-15T10:00:00
     :param topic: Topic of the meeting
     :return: Confirmation message
     """
+    _require_employee(employee_id)
     meeting_req = MeetingCreate(
         emp_id=employee_id,
         meeting_dt=meeting_datetime,
@@ -125,25 +142,23 @@ def schedule_meeting(employee_id: str, meeting_datetime: datetime, topic: str) -
     return meeting_manager.schedule_meeting(meeting_req)
 
 
-# TODO: return type should be List[Dict[str, str]], not str.
 @mcp.tool()
-def get_meetings(employee_id: str) -> str:
+def get_meetings(employee_id: str) -> List[Dict[str, str]]:
     """
     Get the list of meetings scheduled for an employee.
     :param employee_id: Employee ID
-    :return: List of meetings
+    :return: List of meetings sorted by date
     """
     return meeting_manager.get_meetings(employee_id)
 
 
-# TODO: topic is documented as optional - use Optional[str] = None.
 @mcp.tool()
-def cancel_meeting(employee_id: str, meeting_datetime: datetime, topic: str) -> str:
+def cancel_meeting(employee_id: str, meeting_datetime: datetime, topic: Optional[str] = None) -> str:
     """
     Cancel a scheduled meeting for an employee.
     :param employee_id: Employee ID
-    :param meeting_datetime: Date and time of the meeting in python datetime format
-    :param topic: Topic of the meeting (optional)
+    :param meeting_datetime: Date and time of the meeting in ISO format, e.g. 2026-01-15T10:00:00
+    :param topic: Topic of the meeting, to pick one if several share the same time (optional)
     :return: Confirmation message
     """
     meeting_req = MeetingCancelRequest(
@@ -163,13 +178,12 @@ def get_employee_leave_balance(emp_id: str) -> str:
     """
     return leave_manager.get_leave_balance(emp_id)
 
-# TODO: type leave_dates as List[date] so the MCP schema tells Claude to send ISO dates; also reject past/duplicate dates.
 @mcp.tool()
-def apply_leave(emp_id: str, leave_dates: list) -> str:
+def apply_leave(emp_id: str, leave_dates: List[date]) -> str:
     """
-    Apply for leave for an employee.
+    Apply for leave for an employee. Dates must be today or later and not already taken.
     :param emp_id: Employee ID
-    :param leave_dates: List of leave dates
+    :param leave_dates: List of leave dates in ISO format, e.g. ["2026-01-20", "2026-01-21"]
     :return: Leave application status message
     """
     req = LeaveApplyRequest(emp_id=emp_id, leave_dates=leave_dates)
@@ -193,7 +207,8 @@ def onboard_new_employee(employee_name: str, employee_email: str, manager_name: 
     - Email: {employee_email}
     - Manager Name: {manager_name}
     Steps to follow:
-    - Add the employee to the HRMS system.
+    - Look up the manager with get_employee_details to get their employee ID and email.
+    - Add the employee to the HRMS system using the manager's ID.
     - Send a welcome email to the employee with their login credentials. (Format: employee_email)
     - Notify the manager about the new employee's onboarding.
     - Raise tickets for a new laptop, id card, and other necessary equipment.
@@ -201,7 +216,5 @@ def onboard_new_employee(employee_name: str, employee_email: str, manager_name: 
     """
 
 
-
 if __name__ == "__main__":
     mcp.run(transport="stdio")
-

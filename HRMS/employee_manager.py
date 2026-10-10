@@ -22,13 +22,12 @@ class EmployeeManager:
         Add a new employee via Pydantic model.
         Raises ValueError if emp_id exists or manager_id is invalid.
         """
-        name, manager_id = emp.name, emp.manager_id
+        manager_id = emp.manager_id or None  # treat "" as "no manager"
         if emp.emp_id in self.employees:
             raise ValueError(f"Employee ID '{emp.emp_id}' already exists.")
-        # TODO: an empty string manager_id ("") slips through here and gets stored; normalise it to None.
         if manager_id and manager_id not in self.employees:
             raise ValueError(f"Manager ID '{manager_id}' does not exist.")
-        self.employees[emp.emp_id] = emp.model_dump()
+        self.employees[emp.emp_id] = {**emp.model_dump(), "manager_id": manager_id}
         self.manager_map[emp.emp_id] = manager_id
 
     def get_manager(self, emp_id: str) -> str:
@@ -44,8 +43,23 @@ class EmployeeManager:
         return f"{mgr_id}: {mgr['name']}"
 
     def search_employee_by_name(self, name_query: str, n: int = 5, cutoff: float = 0.6) -> List[str]:
-        matches = get_close_matches(name_query, [e["name"] for e in self.employees.values()], n=n, cutoff=cutoff)
-        return [eid for eid, data in self.employees.items() if data["name"] in matches]
+        """
+        Return IDs of employees matching the query on full, first or last name (case-insensitive).
+        Falls back to fuzzy matching so small typos still find the employee.
+        """
+        query = name_query.strip().lower()
+        if not query:
+            return []
+
+        def name_parts(name: str) -> List[str]:
+            return [name.lower(), *name.lower().split()]
+
+        matches = [eid for eid, data in self.employees.items() if query in name_parts(data["name"])]
+        if not matches:
+            candidates = [part for data in self.employees.values() for part in name_parts(data["name"])]
+            close = set(get_close_matches(query, candidates, n=n, cutoff=cutoff))
+            matches = [eid for eid, data in self.employees.items() if close & set(name_parts(data["name"]))]
+        return matches[:n]
 
     def get_employee_details(self, emp_id: str) -> Dict[str, str]:
         if emp_id not in self.employees:
@@ -60,7 +74,6 @@ class EmployeeManager:
 
 if __name__ == "__main__":
     em = EmployeeManager()
-    # TODO: this demo is broken - EmployeeCreate requires emp_id.
-    em.add_employee(EmployeeCreate(name="John Doe", manager_id=None))
-    em.add_employee(EmployeeCreate(name="Mama Doe", manager_id="E001"))
+    em.add_employee(EmployeeCreate(emp_id=em.get_next_emp_id(), name="John Doe", manager_id=None))
+    em.add_employee(EmployeeCreate(emp_id=em.get_next_emp_id(), name="Mama Doe", manager_id="E001"))
     print(em.get_next_emp_id())

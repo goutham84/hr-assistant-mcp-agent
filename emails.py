@@ -32,7 +32,11 @@ class EmailSender:
         html: bool = False,
         attachments: Optional[List[str]] = None,
     ) -> None:
-        # TODO: fail fast with a clear error if username/password are missing (SENDER_EMAIL / SENDER_EMAIL_PWD not set).
+        if not self.username or not self.password:
+            raise RuntimeError("Email is not configured: set SENDER_EMAIL and SENDER_EMAIL_PWD in your .env file.")
+        if not to_emails:
+            raise ValueError("At least one recipient is required.")
+
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = from_email or self.username
@@ -73,7 +77,9 @@ if __name__ == "__main__":
         password=os.getenv("SENDER_EMAIL_PWD"),
         use_tls=True
     )
+    # Sends a test email to your own address
     email_sender.send_email(
         subject="Test Email",
         body="This is a test email.",
-        to_emails="add your email here",)
+        to_emails=os.getenv("SENDER_EMAIL"),
+    )
