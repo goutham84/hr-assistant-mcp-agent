@@ -1,0 +1,13 @@
+[project]
+name = "hr-assistant-mcp-agent"
+version = "0.1.0"
+description = "MCP-powered HR assistant for onboarding, leave management, meeting scheduling, and IT ticketing via Claude"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Goutham Kachhawa", email = "goutham.kachhawa82@gmail.com" }]
+license = { text = "MIT" }
+dependencies = [
+    "mcp[cli]>=1.9.4",
+    "pydantic>=2.0",
+    "python-dotenv>=1.0",
+]
